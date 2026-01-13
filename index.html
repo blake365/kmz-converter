@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KMZ to CSV Converter</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 32px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #1a1a1a;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 40px;
+            font-size: 14px;
+        }
+
+        .drop-zone {
+            border: 3px dashed #ccc;
+            border-radius: 12px;
+            padding: 60px 20px;
+            text-align: center;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .drop-zone:hover {
+            border-color: #0066cc;
+            background: #fafafa;
+        }
+
+        .drop-zone.dragover {
+            border-color: #0066cc;
+            background: #e6f2ff;
+        }
+
+        .drop-zone p {
+            color: #666;
+            font-size: 16px;
+        }
+
+        .drop-zone .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .status {
+            margin-top: 20px;
+            padding: 16px;
+            background: white;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .status.processing {
+            color: #0066cc;
+        }
+
+        .status.success {
+            color: #00aa00;
+        }
+
+        .status.error {
+            color: #cc0000;
+        }
+
+        .file-types {
+            margin-top: 12px;
+            font-size: 12px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>KMZ to CSV Converter</h1>
+        <p class="subtitle">Client-side processing &bull; No data uploaded &bull; Free</p>
+
+        <div id="dropZone" class="drop-zone">
+            <div class="icon">📍</div>
+            <p>Drag KMZ or KML file here, or click to browse</p>
+            <p class="file-types">Supports .kmz and .kml files</p>
+            <input type="file" id="fileInput" accept=".kmz,.kml" hidden>
+        </div>
+
+        <div id="status" class="status">Ready</div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const status = document.getElementById('status');
+
+        // Click to browse
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        // File input change
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        // Drag and drop events
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        function updateStatus(message, type = '') {
+            status.textContent = message;
+            status.className = 'status' + (type ? ` ${type}` : '');
+        }
+
+        async function handleFile(file) {
+            const name = file.name.toLowerCase();
+
+            if (!name.endsWith('.kmz') && !name.endsWith('.kml')) {
+                updateStatus('Please select a .kmz or .kml file', 'error');
+                return;
+            }
+
+            try {
+                if (name.endsWith('.kmz')) {
+                    await processKMZ(file);
+                } else {
+                    await processKML(file);
+                }
+            } catch (error) {
+                console.error(error);
+                updateStatus(`Error: ${error.message}`, 'error');
+            }
+
+            // Reset file input for re-upload of same file
+            fileInput.value = '';
+        }
+
+        async function processKMZ(file) {
+            updateStatus('Unzipping KMZ...', 'processing');
+
+            const zip = await JSZip.loadAsync(file);
+
+            // Find the KML file inside the zip
+            const kmlFileName = Object.keys(zip.files).find(name =>
+                name.toLowerCase().endsWith('.kml')
+            );
+
+            if (!kmlFileName) {
+                throw new Error('No KML file found inside KMZ');
+            }
+
+            const kmlText = await zip.files[kmlFileName].async('string');
+
+            await parseAndConvert(kmlText, file.name.replace(/\.kmz$/i, '.csv'));
+        }
+
+        async function processKML(file) {
+            updateStatus('Reading KML...', 'processing');
+
+            const kmlText = await file.text();
+
+            await parseAndConvert(kmlText, file.name.replace(/\.kml$/i, '.csv'));
+        }
+
+        async function parseAndConvert(kmlText, outputFilename) {
+            updateStatus('Parsing KML...', 'processing');
+
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(kmlText, 'text/xml');
+
+            // Check for parse errors
+            const parseError = xmlDoc.querySelector('parsererror');
+            if (parseError) {
+                throw new Error('Invalid KML format');
+            }
+
+            const data = extractPlacemarks(xmlDoc);
+
+            if (data.length === 0) {
+                throw new Error('No placemarks found in file');
+            }
+
+            updateStatus(`Found ${data.length} coordinate${data.length === 1 ? '' : 's'}...`, 'processing');
+
+            const csv = convertToCSV(data);
+            downloadCSV(csv, outputFilename);
+
+            updateStatus(`Done! Downloaded ${data.length} coordinate${data.length === 1 ? '' : 's'}`, 'success');
+        }
+
+        function extractPlacemarks(xmlDoc) {
+            const placemarks = xmlDoc.getElementsByTagName('Placemark');
+            const results = [];
+            let groupID = 0;
+
+            for (const pm of placemarks) {
+                const name = pm.querySelector('name')?.textContent?.trim() || '';
+                const description = pm.querySelector('description')?.textContent?.trim() || '';
+
+                // Handle Point
+                const point = pm.querySelector('Point coordinates');
+                if (point) {
+                    const coords = parseCoordinates(point.textContent);
+                    if (coords.length > 0) {
+                        results.push({
+                            type: 'Point',
+                            name,
+                            description,
+                            lat: coords[0].lat,
+                            lon: coords[0].lon,
+                            altitude: coords[0].alt,
+                            groupID: groupID++,
+                            vertexIndex: ''
+                        });
+                    }
+                }
+
+                // Handle LineString
+                const lines = pm.querySelectorAll('LineString coordinates');
+                for (const line of lines) {
+                    const coords = parseCoordinates(line.textContent);
+                    coords.forEach((coord, idx) => {
+                        results.push({
+                            type: 'Line',
+                            name,
+                            description,
+                            lat: coord.lat,
+                            lon: coord.lon,
+                            altitude: coord.alt,
+                            groupID: groupID,
+                            vertexIndex: idx
+                        });
+                    });
+                    if (coords.length > 0) groupID++;
+                }
+
+                // Handle Polygon (outer boundary)
+                const polygons = pm.querySelectorAll('Polygon outerBoundaryIs LinearRing coordinates');
+                for (const polygon of polygons) {
+                    const coords = parseCoordinates(polygon.textContent);
+                    coords.forEach((coord, idx) => {
+                        results.push({
+                            type: 'Polygon',
+                            name,
+                            description,
+                            lat: coord.lat,
+                            lon: coord.lon,
+                            altitude: coord.alt,
+                            groupID: groupID,
+                            vertexIndex: idx
+                        });
+                    });
+                    if (coords.length > 0) groupID++;
+                }
+
+                // Handle MultiGeometry
+                const multiGeom = pm.querySelector('MultiGeometry');
+                if (multiGeom) {
+                    // Points in MultiGeometry
+                    const mgPoints = multiGeom.querySelectorAll('Point coordinates');
+                    for (const pt of mgPoints) {
+                        const coords = parseCoordinates(pt.textContent);
+                        if (coords.length > 0) {
+                            results.push({
+                                type: 'Point',
+                                name,
+                                description,
+                                lat: coords[0].lat,
+                                lon: coords[0].lon,
+                                altitude: coords[0].alt,
+                                groupID: groupID++,
+                                vertexIndex: ''
+                            });
+                        }
+                    }
+
+                    // Lines in MultiGeometry
+                    const mgLines = multiGeom.querySelectorAll('LineString coordinates');
+                    for (const line of mgLines) {
+                        const coords = parseCoordinates(line.textContent);
+                        coords.forEach((coord, idx) => {
+                            results.push({
+                                type: 'Line',
+                                name,
+                                description,
+                                lat: coord.lat,
+                                lon: coord.lon,
+                                altitude: coord.alt,
+                                groupID: groupID,
+                                vertexIndex: idx
+                            });
+                        });
+                        if (coords.length > 0) groupID++;
+                    }
+
+                    // Polygons in MultiGeometry
+                    const mgPolygons = multiGeom.querySelectorAll('Polygon outerBoundaryIs LinearRing coordinates');
+                    for (const polygon of mgPolygons) {
+                        const coords = parseCoordinates(polygon.textContent);
+                        coords.forEach((coord, idx) => {
+                            results.push({
+                                type: 'Polygon',
+                                name,
+                                description,
+                                lat: coord.lat,
+                                lon: coord.lon,
+                                altitude: coord.alt,
+                                groupID: groupID,
+                                vertexIndex: idx
+                            });
+                        });
+                        if (coords.length > 0) groupID++;
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        function parseCoordinates(coordString) {
+            if (!coordString) return [];
+
+            // KML format: "lon,lat,alt lon,lat,alt" or "lon,lat lon,lat"
+            // Coordinates are separated by whitespace, components by commas
+            return coordString
+                .trim()
+                .split(/\s+/)
+                .filter(s => s.length > 0)
+                .map(coord => {
+                    const parts = coord.split(',').map(Number);
+                    return {
+                        lon: parts[0] || 0,
+                        lat: parts[1] || 0,
+                        alt: parts[2] || 0
+                    };
+                })
+                .filter(c => !isNaN(c.lat) && !isNaN(c.lon));
+        }
+
+        function convertToCSV(data) {
+            const headers = ['Type', 'Name', 'Description', 'Latitude', 'Longitude', 'Altitude', 'GroupID', 'VertexIndex'];
+
+            const rows = data.map(item => [
+                item.type,
+                escapeCSV(item.name),
+                escapeCSV(item.description),
+                item.lat,
+                item.lon,
+                item.altitude,
+                item.groupID,
+                item.vertexIndex
+            ]);
+
+            return [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+        }
+
+        function escapeCSV(str) {
+            if (!str) return '';
+            // If contains comma, quote, or newline, wrap in quotes and escape internal quotes
+            if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+                return `"${str.replace(/"/g, '""')}"`;
+            }
+            return str;
+        }
+
+        function downloadCSV(csvContent, filename) {
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+        }
+    </script>
+</body>
+</html>
