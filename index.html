@@ -14,9 +14,11 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f5f5f5;
+            background: #ebe5df;
             min-height: 100vh;
-            padding: 40px 20px;
+            padding: 40px 20px 60px;
+            display: flex;
+            flex-direction: column;
         }
 
         .container {
@@ -28,37 +30,41 @@
             font-size: 32px;
             font-weight: 600;
             margin-bottom: 8px;
-            color: #1a1a1a;
+            color: #1f1f1e;
         }
 
         .subtitle {
-            color: #666;
-            margin-bottom: 40px;
+            color: #6b6560;
+            margin-bottom: 8px;
             font-size: 14px;
         }
 
+        .subtitle:last-of-type {
+            margin-bottom: 40px;
+        }
+
         .drop-zone {
-            border: 3px dashed #ccc;
+            border: 3px dashed #c4beb7;
             border-radius: 12px;
             padding: 60px 20px;
             text-align: center;
-            background: white;
+            background: #f9f7f5;
             cursor: pointer;
             transition: all 0.2s ease;
         }
 
         .drop-zone:hover {
-            border-color: #0066cc;
-            background: #fafafa;
+            border-color: #da7756;
+            background: #fdfcfb;
         }
 
         .drop-zone.dragover {
-            border-color: #0066cc;
-            background: #e6f2ff;
+            border-color: #da7756;
+            background: #fef6f3;
         }
 
         .drop-zone p {
-            color: #666;
+            color: #6b6560;
             font-size: 16px;
         }
 
@@ -70,35 +76,98 @@
         .status {
             margin-top: 20px;
             padding: 16px;
-            background: white;
+            background: #f9f7f5;
             border-radius: 8px;
-            text-align: center;
+            text-align: left;
             font-size: 14px;
-            color: #666;
+            color: #6b6560;
         }
 
         .status.processing {
-            color: #0066cc;
+            color: #da7756;
         }
 
         .status.success {
-            color: #00aa00;
+            color: #2e7d32;
         }
 
         .status.error {
-            color: #cc0000;
+            color: #c62828;
         }
 
         .file-types {
             margin-top: 12px;
             font-size: 12px;
-            color: #999;
+            color: #9b9590;
+        }
+
+        .selected-file {
+            margin-top: 20px;
+            padding: 16px;
+            background: #f9f7f5;
+            border-radius: 8px;
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+
+        .selected-file.visible {
+            display: flex;
+        }
+
+        .file-name {
+            font-size: 14px;
+            color: #1f1f1e;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .convert-btn {
+            background: #da7756;
+            color: white;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+            flex-shrink: 0;
+        }
+
+        .convert-btn:hover {
+            background: #c4684a;
+        }
+
+        .convert-btn:disabled {
+            background: #c4beb7;
+            cursor: not-allowed;
+        }
+
+        footer {
+            margin-top: auto;
+            padding-top: 40px;
+            text-align: center;
+            font-size: 13px;
+            color: #9b9590;
+        }
+
+        footer a {
+            color: #6b6560;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            color: #da7756;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>KMZ to CSV Converter</h1>
+        <p class="subtitle">Get a list of your point coordinates</p>
         <p class="subtitle">Client-side processing &bull; No data uploaded &bull; Free</p>
 
         <div id="dropZone" class="drop-zone">
@@ -108,13 +177,25 @@
             <input type="file" id="fileInput" accept=".kmz,.kml" hidden>
         </div>
 
-        <div id="status" class="status">Ready</div>
+        <div id="selectedFile" class="selected-file">
+            <span id="fileName" class="file-name"></span>
+            <button id="convertBtn" class="convert-btn">Convert</button>
+        </div>
+
+        <div id="status" class="status">Status: Ready</div>
     </div>
+
+    <footer>Built by <a href="https://blakemorgan.rocks" target="_blank">Blake Morgan</a> and Claude Code</footer>
 
     <script>
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
         const status = document.getElementById('status');
+        const selectedFileEl = document.getElementById('selectedFile');
+        const fileNameEl = document.getElementById('fileName');
+        const convertBtn = document.getElementById('convertBtn');
+
+        let selectedFile = null;
 
         // Click to browse
         dropZone.addEventListener('click', () => fileInput.click());
@@ -122,7 +203,7 @@
         // File input change
         fileInput.addEventListener('change', (e) => {
             if (e.target.files.length > 0) {
-                handleFile(e.target.files[0]);
+                selectFile(e.target.files[0]);
             }
         });
 
@@ -141,24 +222,43 @@
             e.preventDefault();
             dropZone.classList.remove('dragover');
             if (e.dataTransfer.files.length > 0) {
-                handleFile(e.dataTransfer.files[0]);
+                selectFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        // Convert button click
+        convertBtn.addEventListener('click', () => {
+            if (selectedFile) {
+                handleFile(selectedFile);
             }
         });
 
         function updateStatus(message, type = '') {
-            status.textContent = message;
+            status.textContent = 'Status: ' + message;
             status.className = 'status' + (type ? ` ${type}` : '');
         }
 
-        async function handleFile(file) {
+        function selectFile(file) {
             const name = file.name.toLowerCase();
 
             if (!name.endsWith('.kmz') && !name.endsWith('.kml')) {
                 updateStatus('Please select a .kmz or .kml file', 'error');
+                selectedFile = null;
+                selectedFileEl.classList.remove('visible');
                 return;
             }
 
+            selectedFile = file;
+            fileNameEl.textContent = file.name;
+            selectedFileEl.classList.add('visible');
+            updateStatus('Ready to convert');
+        }
+
+        async function handleFile(file) {
+            convertBtn.disabled = true;
+
             try {
+                const name = file.name.toLowerCase();
                 if (name.endsWith('.kmz')) {
                     await processKMZ(file);
                 } else {
@@ -169,8 +269,7 @@
                 updateStatus(`Error: ${error.message}`, 'error');
             }
 
-            // Reset file input for re-upload of same file
-            fileInput.value = '';
+            convertBtn.disabled = false;
         }
 
         async function processKMZ(file) {
