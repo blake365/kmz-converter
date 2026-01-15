@@ -136,13 +136,15 @@ async function parseAndConvert(kmlText, outputFilename) {
 }
 
 function extractPlacemarks(xmlDoc) {
-    const placemarks = xmlDoc.getElementsByTagName('Placemark');
     const results = [];
     let groupID = 0;
 
-    for (const pm of placemarks) {
-        const name = pm.querySelector('name')?.textContent?.trim() || '';
-        const description = pm.querySelector('description')?.textContent?.trim() || '';
+    // Helper to extract placemark data with folder context
+    function processPlacemark(pm, folderPath) {
+        const name = pm.querySelector(':scope > name')?.textContent?.trim() || '';
+        const description = pm.querySelector(':scope > description')?.textContent?.trim() || '';
+        const folder = folderPath.length > 0 ? folderPath[folderPath.length - 1] : '';
+        const fullPath = folderPath.join(' / ');
 
         // Handle Point
         const point = pm.querySelector('Point coordinates');
@@ -157,7 +159,9 @@ function extractPlacemarks(xmlDoc) {
                     lon: coords[0].lon,
                     altitude: coords[0].alt,
                     groupID: groupID++,
-                    vertexIndex: ''
+                    vertexIndex: '',
+                    folder,
+                    folderPath: fullPath
                 });
             }
         }
@@ -175,7 +179,9 @@ function extractPlacemarks(xmlDoc) {
                     lon: coord.lon,
                     altitude: coord.alt,
                     groupID: groupID,
-                    vertexIndex: idx
+                    vertexIndex: idx,
+                    folder,
+                    folderPath: fullPath
                 });
             });
             if (coords.length > 0) groupID++;
@@ -194,7 +200,9 @@ function extractPlacemarks(xmlDoc) {
                     lon: coord.lon,
                     altitude: coord.alt,
                     groupID: groupID,
-                    vertexIndex: idx
+                    vertexIndex: idx,
+                    folder,
+                    folderPath: fullPath
                 });
             });
             if (coords.length > 0) groupID++;
@@ -216,7 +224,9 @@ function extractPlacemarks(xmlDoc) {
                         lon: coords[0].lon,
                         altitude: coords[0].alt,
                         groupID: groupID++,
-                        vertexIndex: ''
+                        vertexIndex: '',
+                        folder,
+                        folderPath: fullPath
                     });
                 }
             }
@@ -234,7 +244,9 @@ function extractPlacemarks(xmlDoc) {
                         lon: coord.lon,
                         altitude: coord.alt,
                         groupID: groupID,
-                        vertexIndex: idx
+                        vertexIndex: idx,
+                        folder,
+                        folderPath: fullPath
                     });
                 });
                 if (coords.length > 0) groupID++;
@@ -253,12 +265,36 @@ function extractPlacemarks(xmlDoc) {
                         lon: coord.lon,
                         altitude: coord.alt,
                         groupID: groupID,
-                        vertexIndex: idx
+                        vertexIndex: idx,
+                        folder,
+                        folderPath: fullPath
                     });
                 });
                 if (coords.length > 0) groupID++;
             }
         }
+    }
+
+    // Recursively traverse folders and documents
+    function traverseContainer(container, folderPath) {
+        // Process direct child placemarks in this container
+        for (const child of container.children) {
+            if (child.tagName === 'Placemark') {
+                processPlacemark(child, folderPath);
+            } else if (child.tagName === 'Folder') {
+                const folderName = child.querySelector(':scope > name')?.textContent?.trim() || 'Unnamed Folder';
+                traverseContainer(child, [...folderPath, folderName]);
+            } else if (child.tagName === 'Document') {
+                // Documents can contain folders and placemarks too
+                traverseContainer(child, folderPath);
+            }
+        }
+    }
+
+    // Start traversal from root - handle both Document and direct Folder children
+    const root = xmlDoc.querySelector('kml');
+    if (root) {
+        traverseContainer(root, []);
     }
 
     return results;
@@ -285,7 +321,7 @@ function parseCoordinates(coordString) {
 }
 
 function convertToCSV(data) {
-    const headers = ['Type', 'Name', 'Description', 'Latitude', 'Longitude', 'Altitude', 'GroupID', 'VertexIndex'];
+    const headers = ['Type', 'Name', 'Description', 'Latitude', 'Longitude', 'Altitude', 'GroupID', 'VertexIndex', 'Folder', 'FolderPath'];
 
     const rows = data.map(item => [
         item.type,
@@ -295,7 +331,9 @@ function convertToCSV(data) {
         item.lon,
         item.altitude,
         item.groupID,
-        item.vertexIndex
+        item.vertexIndex,
+        escapeCSV(item.folder),
+        escapeCSV(item.folderPath)
     ]);
 
     return [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
